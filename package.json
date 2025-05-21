@@ -1,0 +1,51 @@
+{
+  "name": "messageprocessinglog",
+  "version": "1.0.0",
+  "description": "A simple CAP project.",
+  "repository": "<Add your repository here>",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.812.0",
+    "@sap-cloud-sdk/http-client": "^4.0.2",
+    "@sap/cds": "^8",
+    "@sap/xsenv": "^5.6.1",
+    "@sap/xssec": "^4",
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "express": "^4",
+    "passport": "^0.7.0",
+    "qs": "^6.14.0"
+  },
+  "devDependencies": {
+    "@cap-js/cds-types": "^0.10.0",
+    "@cap-js/sqlite": "^1",
+    "@sap/cds-dk": "^8",
+    "rimraf": "^5.0.5",
+    "mbt": "^1.2.29"
+  },
+  "scripts": {
+    "start": "cds-serve",
+    "watch-monitor-is-mpl": "cds watch --open monitor-is-mpl/webapp/index.html?sap-ui-xx-viewCache=false",
+    "undeploy": "cf undeploy messageprocessinglog --delete-services --delete-service-keys --delete-service-brokers",
+    "build": "rimraf resources mta_archives && mbt build --mtar archive",
+    "deploy": "cf deploy mta_archives/archive.mtar --retries 1"
+  },
+  "cds": {
+    "requires": {
+      "auth": {
+        "[production]": {
+          "kind": "xsuaa"
+        },
+        "[development]": {
+          "kind": "mocked"
+        }
+      },
+      "destinations": true
+    }
+  },
+  "sapux": [
+    "app/monitor-is-mpl"
+  ]
+}
