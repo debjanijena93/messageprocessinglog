@@ -9,20 +9,31 @@ require('dotenv').config();
 
 const { executeHttpRequest } = require('@sap-cloud-sdk/http-client');
 
-let awsAccessKey = `${process.env.AWS_ACCESS_KEY}`
-let awsSecretAccessKey = `${process.env.AWS_SECRET_ACCESS_KEY}`
-let s3Bucket = `${process.env.S3_BUCKET}`
+let awsAccessKey, awsSecretAccessKey, s3Bucket;
+if (cds.env.prouction == false) {
+    awsAccessKey = `${process.env.AWS_ACCESS_KEY}`
+    awsSecretAccessKey = `${process.env.AWS_SECRET_ACCESS_KEY}`
+    s3Bucket = `${process.env.S3_BUCKET}`
+
+} else if (JSON.parse(process.env.VCAP_SERVICES)['user-provided'] != undefined) {
+    let credentials = JSON.parse(process.env.VCAP_SERVICES)['user-provided'][0].credentials;
+    awsAccessKey = credentials.awsAccessKey;
+    awsSecretAccessKey = credentials.awsSecretAccessKey;
+    s3Bucket = credentials.s3Bucket;
+}
 
 let allResult
 let objectMessageGuid
 
-const s3 = new S3Client({
+if (awsAccessKey) {
+var s3 = new S3Client({
     region: "eu-north-1",
     credentials: {
         accessKeyId: awsAccessKey,
         secretAccessKey: awsSecretAccessKey
     }
 })
+}
 
 // Helper: Convert stream to string
 const streamToString = async (stream) => {
