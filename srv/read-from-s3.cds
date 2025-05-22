@@ -1,10 +1,14 @@
 service CatalogService {
-    action reads3file(filePath : String)            returns {
+    action reads3file(filePath : String)                     returns {
         content : String;
     };
 
-    action fetchLogsAndUpload(destination : String) returns String;
-    action callIntegrationAPI()                     returns String;
+    action fetchLogsAndUpload(destination : String)          returns String;
+
+    action updateSubaccountDestination(globalAccount : String,
+                                       subAccount : String,
+                                       destination : String,
+                                       isActive : String ) returns String;
 
     entity S3JsonData {
         key messageGuid       : String;

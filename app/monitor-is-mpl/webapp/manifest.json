@@ -62,7 +62,8 @@
       "libs": {
         "sap.m": {},
         "sap.ui.core": {},
-        "sap.fe.templates": {}
+        "sap.fe.templates": {},
+        "sap.f": {}
       }
     },
     "contentDensities": {
@@ -94,17 +95,28 @@
       "css": []
     },
     "routing": {
-      "config": {},
+      "config": {
+        "flexibleColumnLayout": {
+          "defaultTwoColumnLayoutType": "TwoColumnsBeginExpanded",
+          "defaultThreeColumnLayoutType": "ThreeColumnsMidExpanded"
+        },
+        "routerClass": "sap.f.routing.Router"
+      },
       "routes": [
         {
           "pattern": ":?query:",
           "name": "S3JsonDataList",
-          "target": "S3JsonDataList"
+          "target": [
+            "S3JsonDataList"
+          ]
         },
         {
           "pattern": "S3JsonData({key}):?query:",
           "name": "S3JsonDataObjectPage",
-          "target": "S3JsonDataObjectPage"
+          "target": [
+            "S3JsonDataList",
+            "S3JsonDataObjectPage"
+          ]
         }
       ],
       "targets": {
@@ -127,11 +139,18 @@
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable"
+                  },
+                  "columns": {
+                    "DataField::date": {
+                      "widthIncludingColumnHeader": true
+                    }
                   }
                 }
               }
             }
-          }
+          },
+          "controlAggregation": "beginColumnPages",
+          "contextPattern": ""
         },
         "S3JsonDataObjectPage": {
           "type": "Component",
@@ -140,11 +159,33 @@
           "options": {
             "settings": {
               "editableHeaderContent": false,
-              "contextPath": "/S3JsonData"
+              "contextPath": "/S3JsonData",
+              "content": {
+                "body": {
+                  "sections": {
+                    "CustomAttachment": {
+                      "template": "monitorismpl.ext.fragment.CustomAttachment",
+                      "position": {
+                        "placement": "Before",
+                        "anchor": "Artifact"
+                      },
+                      "title": "Attachment"
+                    }
+                  }
+                }
+              }
             }
-          }
+          },
+          "controlAggregation": "midColumnPages",
+          "contextPattern": "/S3JsonData({key})"
         }
       }
+    },
+    "rootView": {
+      "viewName": "sap.fe.templates.RootContainer.view.Fcl",
+      "type": "XML",
+      "async": true,
+      "id": "appRootView"
     }
   },
   "sap.fiori": {

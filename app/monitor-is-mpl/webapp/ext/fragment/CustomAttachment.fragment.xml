@@ -1,0 +1,32 @@
+
+<core:FragmentDefinition xmlns:core="sap.ui.core"
+    xmlns="sap.m">
+    <VBox id="idVBox" visible="{= ${to_Attachments}.length > 0 }" core:require="{ handler: 'monitorismpl/ext/fragment/CustomAttachment'}">
+        <Table id="idToAttachmentsTable" items="{to_Attachments}"  >
+            <columns>
+                <Column id="id1Column">
+                    <Text id ="idNameText" text="Name1"/>
+                </Column>
+                <Column id="id2Column">
+                    <Text id="idTypeText" text="Type"/>
+                </Column>
+                <Column id="id3Column">
+                    <Text id ="idModifiedAtText" text="Modified At"/>
+                </Column>
+                <Column id="id4Column">
+                    <Text id ="idSize1Text" text="Size"/>
+                </Column>
+            </columns>
+            <items>
+                <ColumnListItem id="idColumnListItem">
+                    <cells>
+                        <Link id="idFileNameLink" text="{fileName}" press="handler.onNamePress"/>
+                        <Text id="idFileType1Text" text="{fileType}"/>
+                        <Text id="idDateText" text="{date}"/>
+                        <Text id="idSizeText" text="{size}"/>
+                    </cells>
+                </ColumnListItem>
+            </items>
+        </Table>
+    </VBox>
+</core:FragmentDefinition>

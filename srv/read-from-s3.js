@@ -561,6 +561,49 @@ module.exports = cds.service.impl(async function (srv) {
         await fetchMPLAndUploadInS3(destination);
 
     });
+
+    this.on('updateSubaccountDestination', async (req) => {
+
+        const key = "btpAccounts.json";
+        const dataFromS3 = await fetchFromS3(key);
+        const destinations = dataFromS3.btpAccounts || [];
+
+        const { globalAccount, subAccount, destination, isActive } = req.data;
+
+        let found = false;
+
+        // Search for matching entry
+        for (let entry of destinations) {
+            if (
+                entry.globalAccount === globalAccount &&
+                entry.subAccount === subAccount &&
+                entry.destination === destination
+            ) {
+                // Update existing entry
+                entry.isActive = isActive;
+                found = true;
+                break;
+            }
+        }
+
+        // If not found, add new entry
+        if (!found) {
+            destinations.push({
+                globalAccount,
+                subAccount,
+                destination,
+                isActive
+            });
+        }
+
+        // Prepare final object and upload
+        const updatedData = { btpAccounts: destinations };
+
+        console.log("Updated destinations: ", JSON.stringify(updatedData, null, 2));
+
+        await uploadInS3(updatedData, '', key);
+    })
+
     /*cds.spawn({ every: 1 * 30 * 1000 }, async () => {
         console.log("Running in every 5 minutes.")
         await fetchMPLAndUploadInS3();
