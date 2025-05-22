@@ -9,6 +9,7 @@ modules:
   requires:
   - name: messageprocessinglog-destination-service
   - name: messageprocessinglog-auth
+  - name: messageprocessinglog-config
   provides:
   - name: srv-api
     properties:
@@ -75,6 +76,12 @@ modules:
     - npm run build:cf
     supported-platforms: []
 resources:
+- name: messageprocessinglog-config
+  type: org.cloudfoundry.existing-service
+  parameters:
+    service: user-provided
+    service-plan: default
+    service-name: messagemon-awsS3  
 - name: messageprocessinglog-destination-service
   type: org.cloudfoundry.managed-service
   parameters:
