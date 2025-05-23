@@ -1,38 +1,45 @@
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
 const mime = require('mime-types'); // for content-type lookup
 
 const cds = require('@sap/cds');
-const axios = require('axios');
-const AWS = require('aws-sdk');
-const qs = require('qs');
 require('dotenv').config();
 
 const { executeHttpRequest } = require('@sap-cloud-sdk/http-client');
 
-let awsAccessKey, awsSecretAccessKey, s3Bucket;
-if (cds.env.prouction == false) {
+let awsAccessKey, awsSecretAccessKey, awsRegion, s3Bucket, batchjobInterval;
+if (cds.env.production == false) {
     awsAccessKey = `${process.env.AWS_ACCESS_KEY}`
     awsSecretAccessKey = `${process.env.AWS_SECRET_ACCESS_KEY}`
+    awsRegion = `${process.env.AWS_REGION}`
     s3Bucket = `${process.env.S3_BUCKET}`
+    batchjobInterval = `${process.env.BATCHJOB_INTERVAL}`
 
 } else if (JSON.parse(process.env.VCAP_SERVICES)['user-provided'] != undefined) {
     let credentials = JSON.parse(process.env.VCAP_SERVICES)['user-provided'][0].credentials;
     awsAccessKey = credentials.awsAccessKey;
     awsSecretAccessKey = credentials.awsSecretAccessKey;
+    awsRegion = credentials.awsRegion;
     s3Bucket = credentials.s3Bucket;
+    batchjobInterval = credentials.batchjobInterval
 }
 
-let allResult
-let objectMessageGuid
+let allResult;
+let objectMessageGuid;
+let startBatchJob = '';
+
+let tenantFileName = 'BTP_TENANTS.json', 
+    masterLogFileName = 'integration-message-log-master-data.json',
+    statusTextFileName = 'statusTexts.json';
+
 
 if (awsAccessKey) {
-var s3 = new S3Client({
-    region: "eu-north-1",
-    credentials: {
-        accessKeyId: awsAccessKey,
-        secretAccessKey: awsSecretAccessKey
-    }
-})
+    var awsS3Client = new S3Client({
+        region: awsRegion,
+        credentials: {
+            accessKeyId: awsAccessKey,
+            secretAccessKey: awsSecretAccessKey
+        }
+    })
 }
 
 // Helper: Convert stream to string
@@ -54,51 +61,51 @@ const streamToBuffer = async (stream) => {
     });
 }
 
+async function readDestination() {
 
-async function getBTPAccessToken() {
-    try {
+    const key = tenantFileName;
+    const dataFromS3 = await fetchFromS3(key);
+    const destinations = dataFromS3.btpAccounts || [];
 
-        const response = await axios.post(`${process.env.TOKEN_URL}`, data, {
-            auth: {
-                username: `${process.env.CLIENT_ID}`,
-                password: `${process.env.CLIENT_SECRET}`
-            },
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-        });
+    return destinations;
+}
 
-        return response.data.access_token;
-    } catch (error) {
-        console.error('Error getting access token:', error.response?.data || error.message);
-        throw error;
-    }
+async function uploadDestinations(destinations) {
+
+    // Prepare final object and upload
+    const key = tenantFileName;
+    const updatedData = { btpAccounts: destinations };
+    await uploadInS3(updatedData, '', key);
+
+
 }
 
 function formatMsDate(msDateString) {
     const timestamp = parseInt(msDateString.match(/\d+/)[0], 10);
     const date = new Date(timestamp);
     const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0'); // months are 0-indexed
+    const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
+}
+
+function formatDateIntoISOFormat(msDateString) {
+
+    // Extract the number using regex or string functions
+    const timestamp = parseInt(msDateString.match(/\d+/)[0], 10);
+
+    const date = new Date(timestamp);
+
+    // Format to ISO string (e.g., 2025-05-22T00:00:00Z)
+    const isoString = date.toISOString();
+
+    const cleanDateTimeStamp = isoString.split('.')[0]; // "2024-05-01T00:00:00"
+    return cleanDateTimeStamp;
 }
 
 async function getAPIResponse(apiURL, destination) {
 
     try {
-        /*const accessToken = await getBTPAccessToken();
-
-        const response = await axios.get(apiURL, {
-            headers: {
-                //Authorization: `Basic ${Buffer.from(`${process.env.BTP_IS_USER}:${process.env.BTP_IS_PASS}`).toString('base64')}`,
-                Authorization: 'Bearer ' + accessToken,
-                Accept: 'application/json',
-            },
-        });
-        
-        console.log("inside function: ", response.data);
-        */
         const response = await executeHttpRequest(
             { destinationName: destination },
             {
@@ -120,12 +127,6 @@ async function getAPIResponse(apiURL, destination) {
 async function uploadInS3(log, filePath, fileName) {
 
     try {
-        const s3 = new AWS.S3({
-            accessKeyId: awsAccessKey,
-            secretAccessKey: awsSecretAccessKey,
-        });
-
-
         const content = JSON.stringify(log, null, 2);
         const key = filePath + fileName;
         const params = {
@@ -134,8 +135,9 @@ async function uploadInS3(log, filePath, fileName) {
             Body: content,
             ContentType: 'application/json',
         };
-        await s3.upload(params).promise();
-        //console.log(`File ${fileName} uploaded successfully at ${s3Bucket}/${filePath}`);
+
+        const command = new PutObjectCommand(params);
+        await awsS3Client.send(command);
 
     } catch (error) {
         console.log('failed to upload - ', error);
@@ -143,92 +145,146 @@ async function uploadInS3(log, filePath, fileName) {
 
 }
 
-async function fetchMPLAndUploadInS3(destination) {
+async function fetchMPLAndUploadInS3(req) {
 
     try {
 
-        //var messageLogAPI = `/api/v1/MessageProcessingLogs?$filter=IntegrationFlowName eq 'TEST_Example_V2'`;
-        var messageLogAPI = '/api/v1/MessageProcessingLogs';
-        var response = await getAPIResponse(messageLogAPI, destination);
-        var output = response.data.d.results;
+        var mainlog = [];
+        var lastRunDateTime;
+        var currentDateTimeISO;
+        var startDate, endDate;
+        var tenants = [];
+        key = masterLogFileName;
+        var jsonData = await fetchFromS3(key);
+        if (jsonData?.messagelog) {
+            var existingMessagelog = jsonData.messagelog.map((item, index) => ({
+                messageGuid: item.messageGuid,
+                status: item.status,
+                date: item.date,
+                globalAccount: item.globalAccount,
+                subAccount: item.subAccount,
+                iFlowName: item.iFlowName,
+                filePath: item.filePath,
+            }));
+
+            lastRunDateTime = jsonData?.lastRunDateTime;
+            mainlog = existingMessagelog;
+        } else {
+
+        }
 
 
-        const mainlog = [];
-        //Loop for individual record
-        for (const [index, entry] of output.entries()) {
-            try {
+        if (!req) {
 
-                //fetch Error information for FAILED status
+            var currentTime = new Date();
+            var currentDateTime = currentTime.getTime();
+            currentDateTimeISO = formatDateIntoISOFormat(currentDateTime);
 
-                if (entry.Status === 'FAILED') {
-                    //messageLogAPI = `${process.env.BTP_IS_URL}` + `/api/v1/MessageProcessingLogErrorInformations('` + `${entry.MessageGuid}` + `')/$value`;
-                    messageLogAPI = `/api/v1/MessageProcessingLogErrorInformations('` + `${entry.MessageGuid}` + `')/$value`;
-                    response = await getAPIResponse(messageLogAPI, destination);
-                    const errorInfo = response?.data;
-                    entry.ErrorInfoMessage = errorInfo;
-                    //console.log("Error information:", errorInfo);
-                }
+            if (lastRunDateTime) {
+                startDate = lastRunDateTime
+                endDate = currentDateTimeISO
+            } else {
 
+            }
+            tenants = await readDestination();
+        } else {
+            startDate = req.data.startDate + 'T00:00:00';
+            endDate = req.data.endDate + 'T00:00:00';
 
-                var date = formatMsDate(entry.LogStart);
-                var filePath = `Innoverv/Innoverv-Dev/${date.substring(6, 10)}/${date.substring(3, 5)}/${date.substring(0, 2)}/${entry.IntegrationArtifact?.Name}/${entry.MessageGuid}/`;
-                var fileName = `${entry.MessageGuid}.json`;
-                mainlog.push({
-                    globalAccount: "Innoverv",
-                    subAccount: "Innoverv-Dev",
-                    date: entry.LogStart,
-                    formattedDate: date,
-                    iFlowName: entry.IntegrationArtifact?.Name,
-                    status: entry.Status,
-                    messageGuid: entry.MessageGuid,
-                    filePath: filePath,
-                })
+            tenants = [{
+                globalAccount: req.data.globalAccount,
+                subAccount: req.data.subAccount,
+                destination: req.data.destination,
+                isActive: 'X'
+            }]
 
+        }
 
+        var newUpdate = '';
 
+        for (const [index_dest, tenant] of tenants.entries()) {
 
-                // upload individual json file
-                await uploadInS3(entry, filePath, fileName);
+            var messageLogAPI = `api/v1/MessageProcessingLogs?$filter=LogStart ge datetime'${startDate}' and LogStart le datetime'${endDate}'`
+            var response = await getAPIResponse(messageLogAPI, tenant.destination);
+            var output = response.data.d.results;
 
-                // fetch attachment for each record
-                //messageLogAPI = `${process.env.BTP_IS_URL}` + `/api/v1/MessageProcessingLogs('` + `${entry.MessageGuid}` + `')/Attachments`;
-                messageLogAPI = `/api/v1/MessageProcessingLogs('` + `${entry.MessageGuid}` + `')/Attachments`;
-                response = await getAPIResponse(messageLogAPI, destination);
-                const attachmentLog = response.data.d.results;
-                if (attachmentLog?.length > 0) {
-                    //console.log("-----------------------------------------------------")
-                    filePath = filePath + 'Attachments/';
-                    fileName = `${entry.MessageGuid}_AttachmentLog.json`;
-                    // upload attachment log for each record
-                    await uploadInS3(attachmentLog, filePath, fileName);
-                    for (const [index, attachment] of attachmentLog.entries()) {
-                        //messageLogAPI = attachment.__metadata.media_src;
-                        messageLogAPI = `api/v1/MessageProcessingLogAttachments('` + attachment.Id + `')/$value`
-                        response = await getAPIResponse(messageLogAPI, destination);
-                        const attachmentData = response.data;
-                        fileName = attachment.Name;
-                        // upload each attachment for a record
-                        await uploadInS3(attachmentData, filePath, fileName);
+            //Loop for individual record
+            for (const [index, entry] of output.entries()) {
+                try {
+
+                    var exists = '';
+                    exists = mainlog.some(log => log.messageGuid === entry.MessageGuid);
+                    if (exists) continue; // Skip this entry if it already exists
+
+                    //fetch Error information for FAILED status
+                    newUpdate = 'X';
+                    if (entry.Status === 'FAILED') {
+                        messageLogAPI = `/api/v1/MessageProcessingLogErrorInformations('` + `${entry.MessageGuid}` + `')/$value`;
+                        response = await getAPIResponse(messageLogAPI, tenant.destination);
+                        const errorInfo = response?.data;
+                        entry.ErrorInfoMessage = errorInfo;
                     }
+
+
+                    var date = formatMsDate(entry.LogStart);
+                    var filePath = `${tenant.globalAccount}/${tenant.subAccount}/${date.substring(6, 10)}/${date.substring(3, 5)}/${date.substring(0, 2)}/${entry.IntegrationArtifact?.Name}/${entry.MessageGuid}/`;
+                    var fileName = `${entry.MessageGuid}.json`;
+                    mainlog.push({
+                        globalAccount: tenant.globalAccount,
+                        subAccount: tenant.subAccount,
+                        date: entry.LogStart,
+                        iFlowName: entry.IntegrationArtifact?.Name,
+                        status: entry.Status,
+                        messageGuid: entry.MessageGuid,
+                        filePath: filePath,
+                    })
+
+
+                    // upload individual json file
+                    await uploadInS3(entry, filePath, fileName);
+
+                    // fetch attachment for each record
+                    messageLogAPI = `/api/v1/MessageProcessingLogs('` + `${entry.MessageGuid}` + `')/Attachments`;
+                    response = await getAPIResponse(messageLogAPI, tenant.destination);
+                    const attachmentLog = response.data.d.results;
+                    if (attachmentLog?.length > 0) {
+                        filePath = filePath + 'Attachments/';
+                        fileName = `${entry.MessageGuid}_AttachmentLog.json`;
+                        // upload attachment log for each record
+                        await uploadInS3(attachmentLog, filePath, fileName);
+                        for (const [index, attachment] of attachmentLog.entries()) {
+                            messageLogAPI = `api/v1/MessageProcessingLogAttachments('` + attachment.Id + `')/$value`
+                            response = await getAPIResponse(messageLogAPI, tenant.destination);
+                            const attachmentData = response.data;
+                            fileName = attachment.Name;
+                            // upload each attachment for a record
+                            await uploadInS3(attachmentData, filePath, fileName);
+                        }
+                    }
+
+
+
+                } catch (error) {
+                    console.log("inside loop error:", error);
                 }
-
-
-
-            } catch (error) {
-                console.log("inside loop error:", error);
             }
         }
-        const integrationMasterLog = {
-            messagelog: mainlog
+
+        if (newUpdate === 'X') {
+            const integrationMasterLog = {
+                lastRunDateTime: endDate,
+                messagelog: mainlog,
+            }
+
+            filePath = '';
+            fileName = masterLogFileName;
+            await uploadInS3(integrationMasterLog, filePath, fileName);
+
+            console.log('Logs uploaded to S3 successfully.');
+            return { message: 'Logs uploaded to S3 successfully.' };
+        } else {
+            return { message: 'No new entry to update' };
         }
-
-        filePath = '';
-        fileName = "integration-message-log-master-data.json";
-        await uploadInS3(integrationMasterLog, filePath, fileName);
-
-        console.log('Logs uploaded to S3 successfully.');
-        return { message: 'Logs uploaded to S3 successfully.' };
-
     } catch (error) {
         console.error('Error--------------------------------------------------------:', error);
         return { error: 'Failed to fetch or upload logs.' };
@@ -238,11 +294,10 @@ async function fetchMPLAndUploadInS3(destination) {
 async function fetchFromS3(key) {
 
 
-    const bucket = "messageprocessinglog";
     var key = key;
     try {
-        const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-        const response = await s3.send(command);
+        const command = new GetObjectCommand({ Bucket: s3Bucket, Key: key });
+        const response = await awsS3Client.send(command);
         const jsonStr = await streamToString(response.Body);
         const jsonData = JSON.parse(jsonStr);
 
@@ -297,7 +352,7 @@ function extractMultiFilters(whereClause) {
 }
 
 
-function mapMessageLog(jsonData, req) {
+function filterAndMapMessageLog(jsonData, req) {
 
     var where = req?.query?.SELECT?.where;
     var messageLog = jsonData?.messagelog;
@@ -317,29 +372,29 @@ function mapMessageLog(jsonData, req) {
     if (messageLog) {
         // Convert JSON array to result format
         result = messageLog.map((item, index) => ({
-            iflowName: item.iFlowName,
+            iFlowName: item.iFlowName,
             messageGuid: item.messageGuid,
             status: item.status,
             statusCriticality: item.status === 'COMPLETED' ? 3
                 : item.status === 'FAILED' ? 1
                     : 0,
-            date: formatMsDate(item.date),
+            date: formatDateIntoISOFormat(item.date),
             globalAccount: item.globalAccount,
             subAccount: item.subAccount,
             filePath: item.filePath,
         }));
+
     }
     return result;
 
 }
 
 function calculateProcessingTime(start, end) {
-    //console.log(start);
+
     const timestampStart = parseInt(start.match(/\d+/)[0], 10);
     const timestampEnd = parseInt(end.match(/\d+/)[0], 10);
 
     var ms = timestampStart - timestampEnd;
-    //console.log(ms);
 
     const hours = Math.floor(ms / 3600000);
     const minutes = Math.floor((ms % 3600000) / 60000);
@@ -351,15 +406,14 @@ function calculateProcessingTime(start, end) {
     if (hours > 0) {
         time += `${hours}h `;
     }
-    if (minutes > 0 || hours > 0) { // Only show minutes if hours are present or minutes are non-zero
+    if (minutes > 0 || hours > 0) { 
         time += `${minutes}m `;
     }
-    if (seconds > 0 || hours > 0 || minutes > 0) { // Only show seconds if hours or minutes are present, or seconds are non-zero
+    if (seconds > 0 || hours > 0 || minutes > 0) { 
         time += `${seconds}s `;
     }
 
-    time += `${milliseconds}ms`; // Always show milliseconds
-    //console.log("time", time.trim);
+    time += `${milliseconds}ms`; 
     return time;
 }
 
@@ -395,7 +449,7 @@ module.exports = cds.service.impl(async function (srv) {
                     result[0].to_Details = {
                         correlationID: jsonDataObjectDetails.CorrelationId,
                         statusText: statusTextMap[result[0].status] || 'unknown',
-                        iflowName: jsonDataObjectDetails?.IntegrationArtifact?.Name,
+                        iFlowName: jsonDataObjectDetails?.IntegrationArtifact?.Name,
                         iflowID: jsonDataObjectDetails?.IntegrationArtifact?.Id,
                         type: jsonDataObjectDetails?.IntegrationArtifact?.Type,
                         package: jsonDataObjectDetails?.IntegrationArtifact?.PackageName,
@@ -419,7 +473,7 @@ module.exports = cds.service.impl(async function (srv) {
                         result[0].to_Attachments[i] = {
                             fileName: attachment.Name,
                             fileType: attachment.ContentType,
-                            date: formatMsDate(attachment.TimeStamp),
+                            date: formatDateIntoISOFormat(attachment.TimeStamp),
                             size: attachment.PayloadSize,
                             filePath: result[0].filePath,
                         }
@@ -432,9 +486,9 @@ module.exports = cds.service.impl(async function (srv) {
 
         } else {
             // fetching data for list report page
-            key = "integration-message-log-master-data.json";
+            key = masterLogFileName;
             var jsonData = await fetchFromS3(key);
-            result = mapMessageLog(jsonData, req);
+            result = filterAndMapMessageLog(jsonData, req);
             allResult = result;
         };
 
@@ -448,7 +502,7 @@ module.exports = cds.service.impl(async function (srv) {
         if (result) {
             try {
 
-                key = result?.[0].filePath + 'Attachments/' + result?.[0].messageGuid + '_AttachmentLog';
+                key = result?.[0].filePath + 'Attachments/' + result?.[0].messageGuid + '_AttachmentLog.json';
                 var jsonDataAttachmentDetails = await fetchFromS3(key);
 
                 var to_Attachments;
@@ -456,7 +510,7 @@ module.exports = cds.service.impl(async function (srv) {
                     fileName: item.Name,
                     fileType: item.ContentType,
                     size: item.PayloadSize,
-                    date: formatMsDate(item.TimeStamp),
+                    date: formatDateIntoISOFormat(item.TimeStamp),
                     filePath: result[0].filePath,
                 }));
 
@@ -473,7 +527,7 @@ module.exports = cds.service.impl(async function (srv) {
     });
 
     srv.on('READ', 'statusVH', async () => {
-        const key = "statusTexts.json";
+        const key = statusTextFileName;
         try {
             const statusRecords = await fetchFromS3(key);
 
@@ -492,23 +546,19 @@ module.exports = cds.service.impl(async function (srv) {
 
     srv.on('READ', 'subAccountVH', async (req) => {
 
-        const key = "btpAccounts.json";
+        const key = tenantFileName;
         const globalAccount = req?.query?.SELECT?.where?.[2].val;
 
         try {
             const subAccounts = await fetchFromS3(key);
-            //     console.log("Sub account code getting called", subAccounts);
 
             const result = subAccounts.btpAccounts.map((item) => ({
                 globalAccount: item.globalAccount,
                 subAccount: item.subAccount,
             }));
 
-            //            console.log("Global account is - ", req.query.SELECT.where[2].val)
             if (globalAccount) {
-                //              console.log("inside sub account filter - ")
                 return result.filter(acc => acc.globalAccount === globalAccount);
-
             }
             return result
 
@@ -521,10 +571,9 @@ module.exports = cds.service.impl(async function (srv) {
 
     srv.on('READ', 'globalAccountVH', async () => {
 
-        const key = "btpAccounts.json";
+        const key = tenantFileName;
         try {
             const globalAccounts = await fetchFromS3(key);
-            //            console.log("Global account code getting called", globalAccounts);
 
             const result = globalAccounts.btpAccounts.map((item) => ({
                 globalAccount: item.globalAccount,
@@ -545,14 +594,11 @@ module.exports = cds.service.impl(async function (srv) {
         console.log("file path:", filePath);
 
         try {
-            const bucket = "messageprocessinglog";
             var key = filePath;
-            //key = 'Innoverv/Innoverv-Dev/2025/05/13/TEST_Example_V2/AGgi8F-G9TF-cHAfX6KY9S_oR9r2/'
-            const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-            const response = await s3.send(command);
+            const command = new GetObjectCommand({ Bucket: s3Bucket, Key: key });
+            const response = await awsS3Client.send(command);
             const fileBuffer = await streamToBuffer(response.Body);
             const base64Content = fileBuffer.toString('base64');
-            //const contentType = mime.lookup(filePath) || 'application/octet-stream';
             const contentType = mime.lookup(filePath) || 'text/plain';
             return {
                 fileName: filePath,
@@ -566,59 +612,102 @@ module.exports = cds.service.impl(async function (srv) {
 
     });
 
-    this.on('fetchLogsAndUpload', async (req) => {
-        var destination = req.data.destination;
-
-        await fetchMPLAndUploadInS3(destination);
-
+    srv.on('fetchLogsAndUpload', async (req) => {
+        await fetchMPLAndUploadInS3(req);
     });
 
-    this.on('updateSubaccountDestination', async (req) => {
+    srv.on('addDestination', async (req) => {
 
-        const key = "btpAccounts.json";
-        const dataFromS3 = await fetchFromS3(key);
-        const destinations = dataFromS3.btpAccounts || [];
+        var destinations = await readDestination();
 
-        const { globalAccount, subAccount, destination, isActive } = req.data;
+        const count = destinations.filter(dest => dest.isActive === 'X').length;
 
-        let found = false;
+        if (count === 5) {
+            req.error(404, '5 active destination already exists. Please deactivate one to add a new destination');
+        } else {
+            const found = destinations.some(entry =>
+                entry.globalAccount === req.data.globalAccount &&
+                entry.subAccount === req.data.subAccount &&
+                entry.isActive === 'X');
 
-        // Search for matching entry
-        for (let entry of destinations) {
+            if (found) {
+                req.error(404, 'One active destination already exists for the BTP Global and sub account');
+            } else {
+                destinations.push(
+                    {
+                        globalAccount: req.data.globalAccount,
+                        subAccount: req.data.subAccount,
+                        destination: req.data.destination,
+                        isActive: 'X'
+                    }
+                )
+            }
+        }
+        await uploadDestinations(destinations)
+        return { message: 'Destination added successfully!' }
+
+    })
+
+    srv.on('deactivateDestination', async (req) => {
+
+        const destinations = await readDestination();
+
+        const foundIndex = destinations.findIndex(entry =>
+            entry.globalAccount === req.data.globalAccount &&
+            entry.subAccount === req.data.subAccount &&
+            entry.destination === req.data.destination);
+
+        if (foundIndex !== -1) {
+            destinations[foundIndex].isActive = req.data.deactivate;
+        } else {
+            req.error(404, ' No such destination found for the BTP Global Account and Sub Account');
+        }
+
+        await uploadDestinations(destinations);
+        return { message: 'Deactivated successfully!' }
+    })
+
+    srv.on('READ', 'destinations', async (req) => {
+
+        var destinations = await readDestination();
+
+
+        const filter = req?.query?.SELECT?.where;
+        let onlyActive = '';
+
+        if (filter) {
             if (
-                entry.globalAccount === globalAccount &&
-                entry.subAccount === subAccount &&
-                entry.destination === destination
+                filter[0].ref[0] === 'isActive' &&
+                filter[1] === '=' &&
+                filter[2].val === 'X'
             ) {
-                // Update existing entry
-                entry.isActive = isActive;
-                found = true;
-                break;
+                onlyActive = 'X';
             }
         }
 
-        // If not found, add new entry
-        if (!found) {
-            destinations.push({
-                globalAccount,
-                subAccount,
-                destination,
-                isActive
-            });
+        if (onlyActive === 'X') {
+            var activeDestinations = destinations.filter(dest => dest.isActive === 'X');
+            return activeDestinations;
+
+        } else {
+            return destinations;
         }
 
-        // Prepare final object and upload
-        const updatedData = { btpAccounts: destinations };
-
-        console.log("Updated destinations: ", JSON.stringify(updatedData, null, 2));
-
-        await uploadInS3(updatedData, '', key);
     })
 
-    /*cds.spawn({ every: 1 * 30 * 1000 }, async () => {
-        console.log("Running in every 5 minutes.")
-        await fetchMPLAndUploadInS3();
-    })*/
+    srv.on('startBatchJob', async (req) => {
+
+        startBatchJob = req.data.start;
+
+    })
+
+    cds.spawn({ every: batchjobInterval * 30 * 1000 }, async () => {
+
+        if (startBatchJob) {
+            console.log("Running batchjob.")
+            await fetchMPLAndUploadInS3();
+        }
+    })
 
 
 });

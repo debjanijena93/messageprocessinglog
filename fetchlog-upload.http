@@ -1,7 +1,0 @@
-###
-POST http://localhost:4004/odata/v4/catalog/fetchLogsAndUpload
-Content-Type: application/json
-
-{
-     "destination": "INNOVERV_DEV_API"
-}

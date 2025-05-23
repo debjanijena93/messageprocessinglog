@@ -1,0 +1,49 @@
+### Fetch from BTP integration Suit and upload in AWS S3
+POST http://localhost:4004/odata/v4/catalog/fetchLogsAndUpload
+Content-Type: application/json
+
+{
+     "destination": "INNOVERV_DEV_API",
+     "globalAccount": "Innoverv",
+     "subAccount": "Innoverv-Dev",
+     "startDate": "2025-04-12",
+     "endDate": "2025-05-24"
+}
+
+### Add destinations
+POST http://localhost:4004/odata/v4/catalog/addDestination
+Content-Type: application/json
+
+{
+     "globalAccount": "4090cdaetrial",
+     "subAccount": "trial5",
+     "destination": "TRIAL_NEW_ONE5"
+}
+
+
+### Deactivate destinations
+POST http://localhost:4004/odata/v4/catalog/deactivateDestination
+Content-Type: application/json
+
+{
+     "globalAccount": "4090cdaetrial",
+     "subAccount": "trial1",
+     "destination": "DJ_TRIAL_API1",
+     "deactivate": "X",
+}
+
+### Read all destinations
+GET http://localhost:4004/odata/v4/catalog/destinations
+
+
+### Read all active destinations
+GET http://localhost:4004/odata/v4/catalog/destinations?$filter=isActive eq 'X'
+
+
+### Start or pause background job
+POST http://localhost:4004/odata/v4/catalog/startBatchJob
+Content-Type: application/json
+
+{
+     "start": "X"
+}

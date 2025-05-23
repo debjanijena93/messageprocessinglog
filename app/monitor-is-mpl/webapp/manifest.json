@@ -143,6 +143,9 @@
                   "columns": {
                     "DataField::date": {
                       "widthIncludingColumnHeader": true
+                    },
+                    "DataField::filePath": {
+                      "availability": "Hidden"
                     }
                   }
                 }

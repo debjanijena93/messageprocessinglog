@@ -20,9 +20,9 @@ annotate service.S3JsonData with @(
                 Label : 'Processing Time',
             },
             {
-                $Type : 'UI.DataField',
-                Value : to_Details.errorInfoMessage,
-                Label : 'Error :',
+                $Type : 'UI.DataFieldForAnnotation',
+                Target : '@UI.ConnectedFields#connected',
+                Label : 'Error:',
                 ![@UI.Hidden],
             },
         ],
@@ -52,12 +52,11 @@ annotate service.S3JsonData with @(
             $Type : 'UI.DataField',
             Label : 'messageGuid',
             Value : messageGuid,
-            ![@UI.Hidden],
         },
         {
             $Type : 'UI.DataField',
             Label : 'iFlow Name',
-            Value : iflowName,
+            Value : iFlowName,
             ![@UI.Importance] : #High,
         },
         {
@@ -72,13 +71,19 @@ annotate service.S3JsonData with @(
             Label : 'Date',
             ![@UI.Importance] : #Medium,
         },
+        {
+            $Type : 'UI.DataField',
+            Value : filePath,
+            Label : 'filePath',
+            ![@UI.Hidden],
+        },
     ],
     UI.SelectionFields: [
     date,
     status,
     subAccount,
     globalAccount,
-    iflowName,
+    iFlowName,
 ],
     UI.Identification : [
         {
@@ -98,7 +103,7 @@ annotate service.S3JsonData with @(
         Data : [
             {
                 $Type : 'UI.DataField',
-                Value : to_Details.iflowName,
+                Value : to_Details.iFlowName,
                 Label : 'Name',
             },
             {
@@ -121,12 +126,31 @@ annotate service.S3JsonData with @(
     UI.HeaderInfo : {
         Title : {
             $Type : 'UI.DataField',
-            Value : iflowName,
+            Value : iFlowName,
         },
         TypeName : '',
         TypeNamePlural : '',
+        Description : {
+            $Type : 'UI.DataField',
+            Value : date,
+        },
     },
     UI.DeleteHidden : true,
+    UI.ConnectedFields #connected : {
+        $Type : 'UI.ConnectedFieldsType',
+        Template : '{status} {to_Details_errorInfoMessage}',
+        Data : {
+            $Type : 'Core.Dictionary',
+            status : {
+                $Type : 'UI.DataField',
+                Value : status,
+            },
+            to_Details_errorInfoMessage : {
+                $Type : 'UI.DataField',
+                Value : to_Details.errorInfoMessage,
+            },
+        },
+    },
 );
 
 annotate service.S3JsonObject with {
@@ -212,7 +236,7 @@ annotate service.S3JsonData with {
 };
 
 annotate service.S3JsonData with {
-    iflowName @Common.Label : 'iFlow Name'
+    iFlowName @Common.Label : 'iFlow Name'
 };
 
 annotate service.S3JsonObject with {

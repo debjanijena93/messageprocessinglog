@@ -17,7 +17,6 @@ sap.ui.define([
             const oData = oContext.getObject(); // <- this retrieves full entity data
             console.log("Full entity data:", oData);
 
-            //const filePath = "OneS4 Developer CVs Innoverv 1.pdf";
             const filePath = oData.filePath + 'Attachments/' + oData.fileName;
 
             try {
@@ -27,7 +26,7 @@ sap.ui.define([
                     headers: {
                         "Content-Type": "application/json"
                     },
-                    body: JSON.stringify({ filePath })
+                    body: JSON.stringify({ filePath })  
                 });
 
 
